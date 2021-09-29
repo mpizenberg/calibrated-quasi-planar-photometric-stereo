@@ -3128,10 +3128,10 @@ loadBar loaded total =
 viewTitle : Element msg
 viewTitle =
     Element.column [ centerX, spacing 16 ]
-        [ Element.paragraph [ Element.Font.center, Element.Font.size 32 ] [ Element.text "View of stereophotometric computed normal map" ]
+        [ Element.paragraph [ Element.Font.center, Element.Font.size 32 ] [ Element.text "Calibrated, quasi-planar, photometric stereo" ]
         , Element.row [ alignRight, spacing 8 ]
             [ Element.link [ Element.Font.underline ]
-                { url = "https://github.com/floffy-f/stenm", label = Element.text "code on GitHub" }
+                { url = "https://github.com/mpizenberg/calibrated-quasi-planar-photometric-stereo", label = Element.text "code on GitHub" }
             , Element.el [] Element.none
             , Icon.github 16
             ]
