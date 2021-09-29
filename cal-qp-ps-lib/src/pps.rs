@@ -5,6 +5,7 @@
 //! Planar photometric stereo
 
 use crate::camera;
+use crate::interop::ToImage;
 use nalgebra::base::allocator::Allocator;
 use nalgebra::base::default_allocator::DefaultAllocator;
 use nalgebra::base::dimension::{Dim, Dynamic, U3};
@@ -30,7 +31,7 @@ pub struct Config {
 pub fn photometric_stereo(
     config: Config,
     raw_images: &[DMatrix<f32>], // f32 in [0,1]
-) -> Result<(Mat3D, Mat3D, DMatrix<f32>), Box<dyn std::error::Error>> {
+) -> (Mat3D, Mat3D, DMatrix<f32>) {
     // eprintln!("lights: {:#?}", config.lights);
     // eprintln!("intrinsics: {:#?}", config.intrinsics);
 
@@ -75,7 +76,7 @@ pub fn photometric_stereo(
         obs.image_shape.1,
         normals.column_iter().map(|c| (c.x, c.y, c.z)),
     );
-    return Ok((normals.clone(), normals, albedo));
+    return (normals.clone(), normals, albedo);
 
     // % Perspective normal integration into a depth map
     // z = perspective_integration(N,K,z_mean,nrows,ncols);
@@ -85,8 +86,6 @@ pub fn photometric_stereo(
 
     todo!()
 }
-
-type Color = (u8, u8, u8);
 
 fn substract_ambiant(raw_imgs: &[DMatrix<f32>], ambiant: &DMatrix<f32>) -> Vec<DMatrix<f32>> {
     raw_imgs
@@ -131,10 +130,8 @@ fn substract_ambiant(raw_imgs: &[DMatrix<f32>], ambiant: &DMatrix<f32>) -> Vec<D
 
 fn save_matrix<P: AsRef<Path>>(img: &DMatrix<f32>, path: P) {
     let im_max = img.max();
-    let (nrows, ncols) = img.shape();
-    let img_u8 =
-        DMatrix::from_iterator(nrows, ncols, img.iter().map(|x| (x / im_max * 255.0) as u8));
-    crate::interop::image_from_matrix(&img_u8)
+    img.map(|x| (x / im_max * 255.0) as u8)
+        .to_image()
         .save(path)
         .unwrap();
 }

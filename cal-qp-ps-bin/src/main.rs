@@ -211,7 +211,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 .collect();
 
             // Compute planar photometric stereo
-            let (xyz, normals, albedo) = pps::pps::photometric_stereo(args.config, &gray_imgs)?;
+            let (xyz, normals, albedo) = pps::pps::photometric_stereo(args.config, &gray_imgs);
 
             // Visualization of depth and normals images.
             save_matrix(&albedo, out_dir_path.join("albedo.png"));

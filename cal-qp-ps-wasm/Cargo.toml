@@ -1,0 +1,31 @@
+[package]
+name = "cal-qp-ps-wasm"
+version = "0.1.0"
+authors = ["Matthieu Pizenberg <matthieu.pizenberg@gmail.com>"]
+edition = "2018"
+license = "MPL-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cal-qp-ps-lib = { path = "../cal-qp-ps-lib", features = ["wasm-bindgen", "serde"] }
+anyhow = "1.0.44" # error handling in the main program
+nalgebra = "0.25.1"
+image = { version = "0.23.14", default-features = false, features = ["jpeg", "png"] }
+log = { version = "0.4.14", default-features = false, features = ["std"] }
+wasm-bindgen = { version = "0.2.78", features = ["serde-serialize"] }
+wasm-bindgen-futures = "0.4.28"
+js-sys = "0.3.55"
+serde = "1.0.130"
+serde_json = "1.0.68"
+
+# The `console_error_panic_hook` crate provides better debugging of panics by
+# logging them with `console.error`. This is great for development, but requires
+# all the `std::fmt` and `std::panicking` infrastructure, so isn't great for
+# code size when deploying.
+console_error_panic_hook = { version = "0.1.6", optional = true }
+
+[profile.release]
+# Tell `rustc` to optimize for small code size.
+opt-level = "s"

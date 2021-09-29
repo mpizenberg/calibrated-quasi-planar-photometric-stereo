@@ -3,5 +3,5 @@ resolver = "2"
 members = [
   "cal-qp-ps-lib",
   "cal-qp-ps-bin",
-  # "cal-qp-ps-wasm",
+  "cal-qp-ps-wasm",
 ]
