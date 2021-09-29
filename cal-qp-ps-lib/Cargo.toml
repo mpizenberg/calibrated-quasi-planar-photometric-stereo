@@ -7,7 +7,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-nalgebra = "0.23.1"
-image = "0.23.12"
-itertools = "0.9"
+nalgebra = "0.25.1"
+image = { version = "0.23.14", default-features = false }
 thiserror = "1.0.29"
+wasm-bindgen = { version = "0.2.78", optional = true }
+serde = { version = "1.0.130", optional = true }
