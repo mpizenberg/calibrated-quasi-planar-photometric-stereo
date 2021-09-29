@@ -1,13 +1,12 @@
 use cal_qp_ps_lib as pps;
 use pps::camera;
+use pps::crop;
 use pps::interop::{self, ToImage};
 
 use glob::glob;
 use nalgebra::{DMatrix, RealField};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-
-mod crop;
 
 // Default values for some of the program arguments.
 const DEFAULT_OUT_DIR: &str = "out";
