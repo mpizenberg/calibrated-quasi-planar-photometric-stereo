@@ -1,0 +1,17 @@
+[package]
+name = "cal-qp-ps-bin"
+version = "0.1.0"
+authors = ["Matthieu Pizenberg <matthieu.pizenberg@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cal-qp-ps-lib = { path = "../cal-qp-ps-lib" }
+glob = "0.3.0"
+pico-args = "0.3.4"
+nalgebra = "0.23.1"
+image = "0.23.12"
+itertools = "0.9"
+indicatif = "0.15.0"
+thiserror = "1.0.29"
