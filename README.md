@@ -1,5 +1,9 @@
 # Calibrated quasi-planar photometric stereo
 
+[![Watch the video][thumbnail]][video]
+
+Slides of the video above: [pdf][slides]
+
 This is a Rust implementation of a calibrated quasi-planar photometric stereo algorithm.
 This repository is organized in four main directories:
 
@@ -7,6 +11,10 @@ This repository is organized in four main directories:
 - `cal-qp-ps-bin/`: an example CLI executable program.
 - `cal-qp-ps-wasm/`: the WebAssembly modules exposing the algorithm in wasm.
 - `web-elm/`: the frontend application, made in Elm.
+
+[video]: https://youtu.be/oGjEF13Qmvs
+[thumbnail]: https://img.youtube.com/vi/oGjEF13Qmvs/0.jpg
+[slides]: https://mpizenberg.github.io/resources/calibrated-quasi-planar-photometric-stereo/photometric-stereo-web-rust-cv-sept-2021.pdf
 
 ## Example CLI application
 
