@@ -4,12 +4,12 @@
 
 //! Planar photometric stereo
 
-use crate::camera;
 use crate::interop::ToImage;
+use crate::normal_integration;
 use nalgebra::base::allocator::Allocator;
 use nalgebra::base::default_allocator::DefaultAllocator;
 use nalgebra::base::dimension::{Dim, Dynamic, U3};
-use nalgebra::{DMatrix, DVector, MatrixMN, RealField, Vector3};
+use nalgebra::{DMatrix, DVector, MatrixMN, RealField, Vector3, Vector4};
 use std::path::Path;
 
 type Mat3D = DMatrix<(f32, f32, f32)>;
@@ -27,11 +27,11 @@ pub struct Config {
 
 /// Compute the depth, normals and albedo from a sequence of images
 /// with different lighting conditions.
-/// Returns (xyz, normals, albedo)
+/// Returns (depths, normals, albedo)
 pub fn photometric_stereo(
     config: Config,
     raw_images: &[DMatrix<f32>], // f32 in [0,1]
-) -> (Mat3D, Mat3D, DMatrix<f32>) {
+) -> (DMatrix<f32>, DMatrix<Vector3<f32>>, DMatrix<f32>) {
     // eprintln!("lights: {:#?}", config.lights);
     // eprintln!("intrinsics: {:#?}", config.intrinsics);
 
@@ -70,13 +70,19 @@ pub fn photometric_stereo(
     };
     let (normals, albedo, lights_intensities) = semicalibrated_ps(&config, &obs);
 
-    // TODO: TEMP to visualize normals and albedo to check we didn't introduce a mistake.
-    let normals = DMatrix::from_iterator(
+    // Reshape normals.
+    // TODO: figure out the problem with normal orientations.
+    let normals: DMatrix<Vector3<f32>> = DMatrix::from_iterator(
         obs.image_shape.0,
         obs.image_shape.1,
-        normals.column_iter().map(|c| (c.x, c.y, c.z)),
+        normals.column_iter().map(|n| Vector3::new(-n.y, -n.x, n.z)),
     );
-    return (normals.clone(), normals, albedo);
+    eprintln!("min n.z: {}", normals.map(|n| n.z).min());
+    eprintln!("max n.z: {}", normals.map(|n| n.z).max());
+    eprintln!("mean n.z: {}", normals.map(|n| n.z).mean());
+
+    let depths = normal_integration::normal_integration(&normals.map(|n| -n));
+    return (depths, normals, albedo);
 
     // % Perspective normal integration into a depth map
     // z = perspective_integration(N,K,z_mean,nrows,ncols);
@@ -85,6 +91,40 @@ pub fn photometric_stereo(
     // [XYZ,N] = postprocess(z,K,z_mean,nrows,ncols);
 
     todo!()
+}
+
+/// Returns (scale, rgb_normals_alpha_depth).
+pub fn join_normals_and_depths(
+    normals: &DMatrix<Vector3<f32>>,
+    depths: &DMatrix<f32>,
+) -> (f32, DMatrix<Vector4<u8>>) {
+    // Prepare for the visualization of depths as u8.
+    let depth_min = depths.min();
+    let depth_max = depths.max();
+    // log::warn!("depths within [ {},  {} ]", depth_min, depth_max);
+    let scale: f32 = depth_max - depth_min;
+    let depth_to_gray = |z| ((z - depth_min) / scale * 255.0) as u8;
+
+    // Prepare visualization of normals as RGB u8.
+    let normals_to_rgb = |n: &Vector3<f32>| {
+        if n.x.abs() + n.y.abs() + n.z.abs() == 0.0 {
+            Vector3::new(0, 0, 0)
+        } else {
+            n.map(|x| (0.5 * (x + 1.0) * 255.0).min(255.0) as u8)
+        }
+    };
+
+    // Concatenate normals and depths into a single RGBA buffer.
+    let rgba_matrix = DMatrix::from_iterator(
+        depths.nrows(),
+        depths.ncols(),
+        normals.iter().zip(depths.into_iter()).map(|(n, z)| {
+            let rgb = normals_to_rgb(n);
+            Vector4::new(rgb.x, rgb.y, rgb.z, depth_to_gray(z))
+        }),
+    );
+
+    (scale, rgba_matrix)
 }
 
 fn substract_ambiant(raw_imgs: &[DMatrix<f32>], ambiant: &DMatrix<f32>) -> Vec<DMatrix<f32>> {
@@ -154,6 +194,7 @@ fn save_matrix<P: AsRef<Path>>(img: &DMatrix<f32>, path: P) {
 // }
 
 // let (normals, albedo, lights_intensities) = semicalibrated_ps(&config, &obs);
+// Careful, albedo is not scaled to be in [0,1].
 fn semicalibrated_ps(
     config: &Config,
     obs: &Obs,
@@ -287,111 +328,6 @@ impl State {
         }
         continuation
     }
-}
-
-/// Perspective integration of a normal field into a depth map.
-fn perspective_integration(
-    z_mean: f32,
-    intrinsics: &camera::Intrinsics,
-    normals: &MatrixMN<f32, U3, Dynamic>,
-    img_shape: (usize, usize),
-) -> DMatrix<f32> {
-    let (ox, oy) = intrinsics.principal_point;
-    let (f, _) = intrinsics.focal;
-    let (nrows, ncols) = img_shape;
-
-    // Initialize gradient of the log depth map.
-    let mut gradient_x = DMatrix::zeros(nrows, ncols);
-    let mut gradient_y = DMatrix::zeros(nrows, ncols);
-
-    // Compute gradient of the log depth map.
-    for (((gx, gy), n), (y, x)) in gradient_x
-        .iter_mut()
-        .zip(gradient_y.iter_mut())
-        // normals is 3 x npixels
-        .zip(normals.column_iter())
-        .zip(coordinates_column_major(img_shape))
-    {
-        let denom = (x as f32 - ox) * n.x + (y as f32 - oy) * n.y + f * n.z;
-        if denom < -0.01 {
-            *gx = -n.x / denom;
-            *gy = -n.y / denom;
-        } else {
-            *gx = 0.0;
-            *gy = 0.0;
-        }
-    }
-
-    // Log depth map by Poisson solver, up to an additive constant.
-    // Warning: gx and gy are switched because dct_poisson uses transposed coordinates.
-    let log_depth = dct_poisson(&gradient_y, &gradient_x);
-
-    // Depth map, up to a multiplicative constant.
-    let depth = log_depth.map(|x| x.exp());
-
-    // Find constant such that mean(depth) == z_mean as in config.
-    let depth_coef = z_mean * depth.sum() / norm_sqr(&depth) as f32;
-    depth_coef * depth
-}
-
-/// An implementation of the use of DCT for solving the Poisson equation,
-/// (integration with Neumann boundary condition)
-/// Code is based on the description in [1], Sec. 3.4
-///
-/// [1] Normal Integration: a Survey - Queau et al., 2017
-///
-/// Usage :
-/// u=DCT_Poisson(p,q)
-/// where p and q are MxN matrices, solves in the least square sense
-/// \nabla u = [p,q] , assuming the natural Neumann boundary condition
-///
-/// \nabla u \cdot \eta = [p,q] \cdot \eta on boundaries
-///
-/// Axis : O->y
-///        |
-///        x
-///
-/// Fast solution is provided by Discrete Cosine Transform
-fn dct_poisson(p: &DMatrix<f32>, q: &DMatrix<f32>) -> DMatrix<f32> {
-    let (nrows, ncols) = p.shape();
-
-    // Divergence of (p,q) using central differences (right-hand side of Eq. 30 in [1]).
-
-    // Compute divergence term of p for the center of the matrix.
-    let mut px = DMatrix::zeros(nrows, ncols);
-    let mut px_center = px.slice_mut((1, 0), (nrows - 2, ncols));
-    let p_bot = p.slice((2, 0), (nrows - 2, ncols));
-    let p_top = p.slice((0, 0), (nrows - 2, ncols));
-    px_center.copy_from(&(0.5 * (p_bot - p_top)));
-
-    // Special treatment for the first and last rows (Eq. 52 in [1]).
-    px.row_mut(0).copy_from(&(0.5 * (p.row(1) - p.row(0))));
-    px.row_mut(nrows - 1)
-        .copy_from(&(0.5 * (p.row(nrows - 1) - p.row(nrows - 2))));
-
-    // Compute divergence term of q for the center of the matrix.
-    let mut qy = DMatrix::zeros(nrows, ncols);
-    let mut qy_center = qy.slice_mut((0, 1), (nrows, ncols - 2));
-    let q_right = q.slice((0, 2), (nrows, ncols - 2));
-    let q_left = q.slice((0, 0), (nrows, ncols - 2));
-    qy_center.copy_from(&(0.5 * (q_right - q_left)));
-
-    // Special treatment for the first and last columns (Eq. 52 in [1]).
-    qy.column_mut(0)
-        .copy_from(&(0.5 * (q.column(1) - q.column(0))));
-    qy.column_mut(ncols - 1)
-        .copy_from(&(0.5 * (q.column(ncols - 1) - q.column(ncols - 2))));
-
-    // Divergence.
-    let f = px + qy;
-
-    // Natural Neumann boundary condition.
-    let b_top = -p.slice((0, 1), (1, ncols - 2));
-    let b_bot = p.slice((nrows - 1, 1), (1, ncols - 2));
-    let b_left = -q.slice((1, 0), (nrows - 2, 1));
-    let b_right = q.slice((1, ncols - 1), (nrows - 2, 1));
-    let b_topleft = (-p[(0, 0)] - q[(0, 0)]) / 2.0_f32.sqrt();
-    todo!()
 }
 
 fn coordinates_column_major(shape: (usize, usize)) -> impl Iterator<Item = (usize, usize)> {

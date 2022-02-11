@@ -2,7 +2,7 @@
 
 use anyhow::anyhow;
 use image::{DynamicImage, ImageError};
-use nalgebra::{DMatrix, Scalar};
+use nalgebra::{DMatrix, Scalar, Vector3, Vector4};
 use serde::Deserialize;
 use std::cell::RefCell;
 use std::io::Cursor;
@@ -218,7 +218,7 @@ impl StenmInner {
 
         log::info!("Conf : {}", conf.z_mean);
 
-        let (_, normals, _) = match &self.dataset {
+        let (depths, normals, _) = match &self.dataset {
             Dataset::Empty => todo!(),
             Dataset::GrayImages(_) => {
                 todo!()
@@ -281,8 +281,11 @@ impl StenmInner {
         };
 
         log::info!("Computations ok");
+        let (z_scale, rgb_normals_alpha_depth) = pps::join_normals_and_depths(&normals, &depths);
 
-        self.normal_map = save_normals(&normals).map_err(utils::report_error)?;
+        // self.normal_map = save_normals(&normals).map_err(utils::report_error)?;
+        self.normal_map = save_rgba(&rgb_normals_alpha_depth).map_err(utils::report_error)?;
+        // self.normal_map = save_depths(&depths).map_err(utils::report_error)?;
 
         log::info!("Encode PNG OK");
 
@@ -334,16 +337,34 @@ fn f32_image_matrix<T: IntoF32Gray + Clone + Scalar>(mat: &DMatrix<T>) -> DMatri
     DMatrix::from_iterator(d1, d2, mat.iter().map(|pix| pix.clone().into_gray_f32()))
 }
 
-type Coords = (f32, f32, f32);
+type Coords = Vector3<f32>;
 
 fn save_normals(img: &DMatrix<Coords>) -> Result<Vec<u8>, ImageError> {
-    let img_u8 = img.map(|(x, y, z)| {
+    let img_u8 = img.map(|n| {
         (
-            ((x + 1.0) / 2.0 * 255.0) as u8,
-            ((y + 1.0) / 2.0 * 255.0) as u8,
-            ((z + 1.0) / 2.0 * 255.0) as u8,
+            ((n.x + 1.0) / 2.0 * 255.0) as u8,
+            ((n.y + 1.0) / 2.0 * 255.0) as u8,
+            ((n.z + 1.0) / 2.0 * 255.0) as u8,
         )
     });
+    encode(&img_u8)
+}
+
+fn save_depths(depths: &DMatrix<f32>) -> Result<Vec<u8>, ImageError> {
+    // Prepare for the visualization of depths as u8.
+    let depth_min = depths.min();
+    let depth_max = depths.max();
+    log::warn!("depths within [ {},  {} ]", depth_min, depth_max);
+    log::warn!("mean depth: {}", depths.mean());
+    let scale: f32 = depth_max - depth_min;
+    let depth_to_gray = |z| ((z - depth_min) / scale * 255.0) as u8;
+    let img_u8 = depths.map(depth_to_gray);
+    encode(&img_u8)
+}
+
+fn save_rgba(img: &DMatrix<Vector4<u8>>) -> Result<Vec<u8>, ImageError> {
+    log::warn!("Mean of rgba normal&depth: {}", img.map(|v| v.max()).max());
+    let img_u8 = img.map(|n| (n.x, n.y, n.z, n.w));
     encode(&img_u8)
 }
 

@@ -1,10 +1,10 @@
 use cal_qp_ps_lib as pps;
-use pps::camera;
+use image::ImageError;
 use pps::crop;
 use pps::interop::{self, ToImage};
 
 use glob::glob;
-use nalgebra::{DMatrix, RealField};
+use nalgebra::{DMatrix, RealField, Vector3, Vector4};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -211,11 +211,12 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 .collect();
 
             // Compute planar photometric stereo
-            let (xyz, normals, albedo) = pps::pps::photometric_stereo(args.config, &gray_imgs);
+            let (depths, normals, albedo) = pps::pps::photometric_stereo(args.config, &gray_imgs);
 
             // Visualization of depth and normals images.
             save_matrix(&albedo, out_dir_path.join("albedo.png"));
             save_normals(&normals, out_dir_path.join("normals.png"));
+            save_depths(&depths, out_dir_path.join("depths.png"));
             // TODO
             Ok(())
         }
@@ -231,19 +232,35 @@ fn save_matrix<P: AsRef<Path>>(img: &DMatrix<f32>, path: P) {
         .unwrap();
 }
 
-type Coords = (f32, f32, f32);
-
-fn save_normals<P: AsRef<Path>>(img: &DMatrix<Coords>, path: P) {
-    img.map(|(x, y, z)| {
+fn save_normals<P: AsRef<Path>>(img: &DMatrix<Vector3<f32>>, path: P) {
+    img.map(|n| {
         (
-            ((x + 1.0) / 2.0 * 255.0) as u8,
-            ((y + 1.0) / 2.0 * 255.0) as u8,
-            ((z + 1.0) / 2.0 * 255.0) as u8,
+            ((n.x + 1.0) / 2.0 * 255.0) as u8,
+            ((n.y + 1.0) / 2.0 * 255.0) as u8,
+            ((n.z + 1.0) / 2.0 * 255.0) as u8,
         )
     })
     .to_image()
     .save(path)
     .unwrap();
+}
+
+fn save_depths<P: AsRef<Path>>(depths: &DMatrix<f32>, path: P) {
+    // Prepare for the visualization of depths as u8.
+    let depth_min = depths.min();
+    let depth_max = depths.max();
+    println!("depths within [ {},  {} ]", depth_min, depth_max);
+    println!("mean depth: {}", depths.mean());
+    let scale: f32 = depth_max - depth_min;
+    let depth_to_gray = |z| ((z - depth_min) / scale * 255.0) as u8;
+    let img_u8 = depths.map(depth_to_gray);
+    img_u8.to_image().save(path).unwrap();
+}
+
+fn save_rgba<P: AsRef<Path>>(img: &DMatrix<Vector4<u8>>, path: P) {
+    println!("Mean of rgba normal&depth: {}", img.map(|v| v.max()).max());
+    let img_u8 = img.map(|n| (n.x, n.y, n.z, n.w));
+    img_u8.to_image().save(path).unwrap();
 }
 
 enum Dataset {

@@ -4,8 +4,8 @@
 
 // #![warn(missing_docs)]
 
-pub mod camera;
 pub mod crop;
 pub mod interop;
+pub mod normal_integration;
 pub mod pps;
 pub mod utils;

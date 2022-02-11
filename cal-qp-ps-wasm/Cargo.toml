@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 cal-qp-ps-lib = { path = "../cal-qp-ps-lib", features = ["wasm-bindgen", "serde"] }
 anyhow = "1.0.44" # error handling in the main program
-nalgebra = "0.25.1"
+nalgebra = "0.29.0"
 image = { version = "0.23.14", default-features = false, features = ["jpeg", "png"] }
 log = { version = "0.4.14", default-features = false, features = ["std"] }
 wasm-bindgen = { version = "0.2.78", features = ["serde-serialize"] }

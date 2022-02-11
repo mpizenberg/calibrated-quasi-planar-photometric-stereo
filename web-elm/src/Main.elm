@@ -20,6 +20,7 @@ import Element.Font
 import Element.Input
 import File as F
 import FileValue as File exposing (File)
+import GlView
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
@@ -52,7 +53,7 @@ port decodeImages : List Value -> Cmd msg
 port loadImagesFromUrls : List String -> Cmd msg
 
 
-port imageDecoded : ({ id : String, img : Value } -> msg) -> Sub msg
+port imageDecoded : ({ id : String, url : String, img : Value } -> msg) -> Sub msg
 
 
 port capture : Value -> Cmd msg
@@ -73,7 +74,7 @@ port log : ({ lvl : Int, content : String } -> msg) -> Sub msg
 port updateRunStep : ({ step : String, progress : Maybe Int } -> msg) -> Sub msg
 
 
-port receiveCroppedImages : (List { id : String, img : Value } -> msg) -> Sub msg
+port receiveCroppedImages : (List { id : String, url : String, img : Value } -> msg) -> Sub msg
 
 
 main : Program Device.Size Model Msg
@@ -109,6 +110,9 @@ type alias Model =
     , loadLights : LoadResult
     , images : Maybe (Pivot Image)
     , lights : Maybe (Pivot Point3d)
+
+    -- 3D WebGL viewer
+    , glViewer : Maybe GlView.Model
     }
 
 
@@ -151,6 +155,7 @@ type State
     | ViewImgs { images : Pivot Image }
     | Config { images : Pivot Image }
     | NMap { images : Pivot Image }
+    | GlView3D { images : Pivot Image }
     | Logs { images : Pivot Image }
 
 
@@ -162,6 +167,7 @@ type FileDraggingState
 
 type alias Image =
     { id : String
+    , url : String
     , texture : Texture
     , width : Int
     , height : Int
@@ -307,6 +313,9 @@ initialModel size =
     , loadLights = LoadIdle
     , images = Nothing
     , lights = Nothing
+
+    -- 3D WebGL viewer
+    , glViewer = Nothing
     }
 
 
@@ -404,7 +413,7 @@ type Msg
     | DragDropImagesMsg DragDropImagesMsg
     | DragDropLightsMsg DragDropLightsMsg
     | LoadExampleImages (List String)
-    | ImageDecoded { id : String, img : Value }
+    | ImageDecoded { id : String, url : String, img : Value }
     | KeyDown RawKey
     | ClickPreviousImage
     | ClickNextImage
@@ -424,10 +433,11 @@ type Msg
     | GotScrollPos (Result Browser.Dom.Error Browser.Dom.Viewport)
     | VerbosityChange Float
     | ToggleAutoScroll Bool
-    | ReceiveCroppedImages (List { id : String, img : Value })
+    | ReceiveCroppedImages (List { id : String, url : String, img : Value })
     | ReceiveCsv String
     | SaveNMapPNG
     | ScrollLogsToEnd
+    | GlViewMsg GlView.Msg
 
 
 type DragDropImagesMsg
@@ -500,6 +510,7 @@ type NavigationMsg
     = GoToPageImages
     | GoToPageConfig
     | GoToPageNMap
+    | GoToPageGLView
     | GoToPageLogs
 
 
@@ -545,6 +556,9 @@ subscriptions model =
             Sub.batch [ resizes WindowResizes, log Log, receiveCroppedImages ReceiveCroppedImages, updateRunStep UpdateRunStep ]
 
         NMap _ ->
+            Sub.batch [ resizes WindowResizes, log Log, receiveCroppedImages ReceiveCroppedImages, updateRunStep UpdateRunStep, Keyboard.downs KeyDown ]
+
+        GlView3D _ ->
             Sub.batch [ resizes WindowResizes, log Log, receiveCroppedImages ReceiveCroppedImages, updateRunStep UpdateRunStep, Keyboard.downs KeyDown ]
 
         Logs _ ->
@@ -720,6 +734,12 @@ update msg model =
             ( goTo GoToPageLogs data model, scrollLogsToPos model.scrollPos )
 
         ( NavigationMsg navMsg, NMap data ) ->
+            ( goTo navMsg data model, Cmd.none )
+
+        ( NavigationMsg GoToPageLogs, GlView3D data ) ->
+            ( goTo GoToPageLogs data model, scrollLogsToPos model.scrollPos )
+
+        ( NavigationMsg navMsg, GlView3D data ) ->
             ( goTo navMsg data model, Cmd.none )
 
         ( NavigationMsg navMsg, Logs data ) ->
@@ -1074,11 +1094,16 @@ update msg model =
                     ( model, Cmd.none )
 
                 firstImage :: otherImages ->
+                    let
+                        ( glViewer, glCmd ) =
+                            GlView.update (GlView.SetImageUrl firstImage.url) GlView.init
+                    in
                     ( { model
                         | nMapPNG = Just (Pivot.fromCons firstImage otherImages)
                         , nMapViewer = Viewer.fitImage 1.0 ( toFloat firstImage.width, toFloat firstImage.height ) model.nMapViewer
+                        , glViewer = Just glViewer
                       }
-                    , Cmd.none
+                    , Cmd.map GlViewMsg glCmd
                     )
 
         ( ReceiveCsv content, _ ) ->
@@ -1158,6 +1183,17 @@ update msg model =
         ( SaveNMapPNG, _ ) ->
             ( model, saveNMapPNG model.imagesCount )
 
+        ( GlViewMsg glViewMsg, _ ) ->
+            case Maybe.map (GlView.update glViewMsg) model.glViewer of
+                Nothing ->
+                    -- Should never happen
+                    ( model, Cmd.none )
+
+                Just ( newGlViewer, glCmd ) ->
+                    ( { model | glViewer = Just newGlViewer }
+                    , Cmd.map GlViewMsg glCmd
+                    )
+
         ( ReturnHome, _ ) ->
             ( model, Browser.Navigation.reload )
 
@@ -1192,8 +1228,8 @@ scrollLogsToPos pos =
     Task.attempt (\_ -> NoMsg) (Browser.Dom.setViewportOf "logs" 0 pos)
 
 
-imageFromValue : { id : String, img : Value } -> Maybe Image
-imageFromValue { id, img } =
+imageFromValue : { id : String, url : String, img : Value } -> Maybe Image
+imageFromValue { id, url, img } =
     case Canvas.Texture.fromDomImage img of
         Nothing ->
             Nothing
@@ -1206,6 +1242,7 @@ imageFromValue { id, img } =
             in
             Just
                 { id = id
+                , url = url
                 , texture = texture
                 , width = round imgSize.width
                 , height = round imgSize.height
@@ -1309,6 +1346,9 @@ goTo msg data model =
 
         GoToPageNMap ->
             { model | state = NMap data, pointerMode = WaitingMove }
+
+        GoToPageGLView ->
+            { model | state = GlView3D data, pointerMode = WaitingMove }
 
         GoToPageLogs ->
             { model
@@ -1593,6 +1633,9 @@ viewElmUI model =
         NMap _ ->
             viewNMap model
 
+        GlView3D _ ->
+            viewGl3D model
+
         Logs _ ->
             viewLogs model
 
@@ -1660,6 +1703,20 @@ nMapHeaderTab msg nMapPNG =
                 [ Element.inFront (Element.el [ alignRight, padding 2 ] (littleDot "green" |> Element.html)) ]
     in
     headerTabWithAttributes "N-map" msg otherAttributes
+
+
+glViewHeaderTab : Maybe Msg -> Maybe GlView.Model -> Element Msg
+glViewHeaderTab msg glViewer =
+    let
+        otherAttributes : List (Element.Attribute Msg)
+        otherAttributes =
+            if glViewer == Nothing then
+                []
+
+            else
+                [ Element.inFront (Element.el [ alignRight, padding 2 ] (littleDot "green" |> Element.html)) ]
+    in
+    headerTabWithAttributes "3D" msg otherAttributes
 
 
 logsHeaderTab : Maybe Msg -> List { lvl : Int, content : String } -> Element Msg
@@ -1940,12 +1997,13 @@ progressBar color progressRatio =
 
 
 viewLogs : Model -> Element Msg
-viewLogs ({ autoscroll, verbosity, seenLogs, notSeenLogs, nMapPNG } as model) =
+viewLogs ({ glViewer, autoscroll, verbosity, seenLogs, notSeenLogs, nMapPNG } as model) =
     Element.column [ width fill, height fill ]
         [ headerBar
             [ headerTab "Images" (Just (GetScrollPosThenNavigationMsg GoToPageImages))
             , headerTab "Config" (Just (GetScrollPosThenNavigationMsg GoToPageConfig))
             , nMapHeaderTab (Just (GetScrollPosThenNavigationMsg GoToPageNMap)) nMapPNG
+            , glViewHeaderTab (Just (NavigationMsg GoToPageGLView)) glViewer
             , logsHeaderTab Nothing notSeenLogs
             ]
         , runProgressBar model
@@ -2105,12 +2163,13 @@ verbositySlider verbosity =
 
 
 viewNMap : Model -> Element Msg
-viewNMap ({ nMapPNG, nMapViewer, notSeenLogs } as model) =
+viewNMap ({ glViewer, nMapPNG, nMapViewer, notSeenLogs } as model) =
     Element.column [ width fill, height fill ]
         [ headerBar
             [ headerTab "Images" (Just (NavigationMsg GoToPageImages))
             , headerTab "Config" (Just (NavigationMsg GoToPageConfig))
             , nMapHeaderTab Nothing nMapPNG
+            , glViewHeaderTab (Just (NavigationMsg GoToPageGLView)) glViewer
             , logsHeaderTab (Just (NavigationMsg GoToPageLogs)) notSeenLogs
             ]
         , runProgressBar model
@@ -2205,16 +2264,43 @@ viewNMap ({ nMapPNG, nMapViewer, notSeenLogs } as model) =
 
 
 
+-- 3D GL view
+
+
+viewGl3D : Model -> Element Msg
+viewGl3D ({ glViewer, notSeenLogs, nMapPNG, nMapViewer } as model) =
+    Element.column [ width fill, height fill ]
+        [ headerBar
+            [ headerTab "Images" (Just (NavigationMsg GoToPageImages))
+            , headerTab "Config" (Just (NavigationMsg GoToPageConfig))
+            , nMapHeaderTab (Just (NavigationMsg GoToPageNMap)) nMapPNG
+            , glViewHeaderTab Nothing glViewer
+            , logsHeaderTab (Just (NavigationMsg GoToPageLogs)) notSeenLogs
+            ]
+        , runProgressBar model
+        , case glViewer of
+            Nothing ->
+                Element.text "No 3D reconstruction available yet."
+
+            Just glViewerModel ->
+                GlView.view glViewerModel
+                    |> Html.map GlViewMsg
+                    |> Element.html
+        ]
+
+
+
 -- Parameters config
 
 
 viewConfig : Model -> Element Msg
-viewConfig ({ params, paramsForm, paramsInfo, notSeenLogs, nMapPNG } as model) =
+viewConfig ({ glViewer, params, paramsForm, paramsInfo, notSeenLogs, nMapPNG } as model) =
     Element.column [ width fill, height fill ]
         [ headerBar
             [ headerTab "Images" (Just (NavigationMsg GoToPageImages))
             , headerTab "Config" Nothing
             , nMapHeaderTab (Just (NavigationMsg GoToPageNMap)) nMapPNG
+            , glViewHeaderTab (Just (NavigationMsg GoToPageGLView)) glViewer
             , logsHeaderTab (Just (NavigationMsg GoToPageLogs)) notSeenLogs
             ]
         , runProgressBar model
@@ -2711,7 +2797,7 @@ toggleCheckboxWidget { offColor, onColor, sliderColor, toggleWidth, toggleHeight
 
 
 viewImgs : Model -> Pivot Image -> Element Msg
-viewImgs ({ pointerMode, bboxDrawn, viewer, notSeenLogs, nMapPNG } as model) images =
+viewImgs ({ glViewer, pointerMode, bboxDrawn, viewer, notSeenLogs, nMapPNG } as model) images =
     let
         img : Image
         img =
@@ -2878,6 +2964,7 @@ viewImgs ({ pointerMode, bboxDrawn, viewer, notSeenLogs, nMapPNG } as model) ima
             [ headerTab "Images" Nothing
             , headerTab "Config" (Just (NavigationMsg GoToPageConfig))
             , nMapHeaderTab (Just (NavigationMsg GoToPageNMap)) nMapPNG
+            , glViewHeaderTab (Just (NavigationMsg GoToPageGLView)) glViewer
             , logsHeaderTab (Just (NavigationMsg GoToPageLogs)) notSeenLogs
             ]
         , runProgressBar model

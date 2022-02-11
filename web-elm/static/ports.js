@@ -22,14 +22,14 @@ export function activatePorts(app, containerSize) {
     } else if (event.data.type == "image-decoded") {
       const image = event.data.data;
       let img = await utils.decodeImage(image.url);
-      app.ports.imageDecoded.send({ id: image.id, img });
+      app.ports.imageDecoded.send({ id: image.id, url: image.url, img });
     } else if (event.data.type == "cropped-image") {
       // Add the cropped image to the list of cropped images.
       const { id, arrayBuffer, imgCount } = event.data.data;
       console.log("Received cropped image in main:", id);
       const url = URL.createObjectURL(new Blob([arrayBuffer]));
       const decodedCropped = await utils.decodeImage(url);
-      croppedImages.push({ id, img: decodedCropped });
+      croppedImages.push({ id, url, img: decodedCropped });
       if (croppedImages.length == imgCount) {
         console.log(`Normal map computed, sending through port`);
         app.ports.receiveCroppedImages.send(croppedImages);

@@ -2,7 +2,7 @@
 
 //! Interoperability conversions between the image and matrix types.
 
-use image::{DynamicImage, ImageBuffer, Luma, Primitive, Rgb};
+use image::{DynamicImage, ImageBuffer, Luma, Primitive, Rgb, Rgba};
 use nalgebra::{DMatrix, Scalar};
 
 // Convert a DMatrix into an Image ---------------------------------------------
@@ -42,6 +42,25 @@ pub fn rgb_from_matrix<T: Scalar + Primitive>(
     img_buf
 }
 
+/// Convert a `(T,T,T, T)` RGBA matrix into an RGBA image.
+/// Inverse operation of matrix_from_rgba_image.
+///
+/// This performs a transposition to accomodate for the
+/// column major matrix into the row major image.
+#[allow(clippy::cast_possible_truncation)]
+pub fn rgba_from_matrix<T: Scalar + Primitive>(
+    mat: &DMatrix<(T, T, T, T)>,
+) -> ImageBuffer<Rgba<T>, Vec<T>> {
+    // TODO: improve the suboptimal allocation in addition to transposition.
+    let (nb_rows, nb_cols) = mat.shape();
+    let mut img_buf = ImageBuffer::new(nb_cols as u32, nb_rows as u32);
+    for (x, y, pixel) in img_buf.enumerate_pixels_mut() {
+        let (r, g, b, a) = mat[(y as usize, x as usize)];
+        *pixel = Rgba([r, g, b, a]);
+    }
+    img_buf
+}
+
 pub trait ToImage {
     fn to_image(&self) -> DynamicImage;
 }
@@ -67,6 +86,12 @@ impl ToImage for DMatrix<(u8, u8, u8)> {
 impl ToImage for DMatrix<(u16, u16, u16)> {
     fn to_image(&self) -> DynamicImage {
         DynamicImage::ImageRgb16(rgb_from_matrix(self))
+    }
+}
+
+impl ToImage for DMatrix<(u8, u8, u8, u8)> {
+    fn to_image(&self) -> DynamicImage {
+        DynamicImage::ImageRgba8(rgba_from_matrix(self))
     }
 }
 
